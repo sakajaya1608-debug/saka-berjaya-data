@@ -2,7 +2,7 @@ name: Scrape Berita Instagram
 
 on:
   schedule:
-    - cron: '0 6 * * *'  # Setiap hari jam 6 pagi UTC (13:00 WIB)
+    - cron: '0 6 * * *'
   workflow_dispatch:
 
 jobs:
@@ -20,15 +20,16 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install requirements
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Install Playwright browsers
+        run: |
+          playwright install --with-deps chromium
+
       - name: Run scraper
-        env:
-          IG_LOGIN_USER: ${{ secrets.IG_LOGIN_USER }}
-          IG_LOGIN_PASS: ${{ secrets.IG_LOGIN_PASS }}
         run: python scraper.py
 
       - name: Commit hasil scraping
