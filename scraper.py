@@ -4,7 +4,6 @@ import time
 from bs4 import BeautifulSoup
 from selenium import webdriver
 from selenium.webdriver.common.by import By
-from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
@@ -29,41 +28,43 @@ def get_driver():
     return driver
 
 
-def scrape_picuki_interactive():
+def scrape_picuki_click_search():
     driver = get_driver()
     posts = []
 
     try:
         print(f"Membuka {BASE_URL}...")
         driver.get(BASE_URL)
-        time.sleep(4)
+        time.sleep(3)
 
-        # Cari input berdasarkan struktur HTML asli: input.main-form__input
+        # 1. Ketik username pada input form
         print("Mencari kolom input pencarian...")
         search_input = driver.find_element(
             By.CSS_SELECTOR, "input.main-form__input"
         )
-        
-        # Klik dan ketik username secara perlahan
         search_input.click()
         search_input.clear()
         for char in USERNAME:
             search_input.send_keys(char)
-            time.sleep(0.1)
+            time.sleep(0.05)
 
         print(f"Berhasil mengetik username: {USERNAME}")
-        
-        # Kirim tombol ENTER untuk memicu pencarian
-        search_input.send_keys(Keys.ENTER)
-        
-        print("Menunggu hasil pencarian dimuat oleh JavaScript (10 detik)...")
-        time.sleep(10)
 
-        # Scroll ke bawah untuk memastikan list postingan ter-load
+        # 2. Klik tombol pencarian (ikon kaca pembesar) secara eksplisit
+        print("Mengklik tombol pencarian...")
+        search_btn = driver.find_element(
+            By.CSS_SELECTOR, "button.main-form__field-download"
+        )
+        search_btn.click()
+
+        print("Menunggu hasil pencarian dimuat oleh JavaScript (12 detik)...")
+        time.sleep(12)  # Beri waktu render hasil pencarian muncul
+
+        # Scroll ke bawah untuk memicu lazy loading tambahan
         driver.execute_script("window.scrollTo(0, document.body.scrollHeight / 2);")
         time.sleep(4)
 
-        # Parsing HTML hasil render
+        # 3. Parsing HTML hasil render
         soup = BeautifulSoup(driver.page_source, "html.parser")
         items = soup.select("li.profile-media-list__item")
         print(f"Ditemukan {len(items)} item postingan di halaman profil.")
@@ -126,4 +127,4 @@ def scrape_picuki_interactive():
 
 
 if __name__ == "__main__":
-    scrape_picuki_interactive()
+    scrape_picuki_click_search()
