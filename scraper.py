@@ -5,6 +5,8 @@ from bs4 import BeautifulSoup
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
@@ -29,7 +31,7 @@ def get_driver():
     return driver
 
 
-def scrape_picuki_with_exact_html():
+def scrape_picuki_with_wait():
     driver = get_driver()
     posts = []
 
@@ -38,65 +40,60 @@ def scrape_picuki_with_exact_html():
         driver.get(BASE_URL)
         time.sleep(3)
 
-        # 1. Ketik username pada kotak pencarian
-        search_box = driver.find_element(
-            By.CSS_SELECTOR, "input.main-form__input, input[type='text']"
+        # 1. Masukkan username ke kotak pencarian
+        search_box = WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located(
+                (By.CSS_SELECTOR, "input.main-form__input, input[type='text']")
+            )
         )
         search_box.clear()
         search_box.send_keys(USERNAME)
+        
+        # Tekan tombol enter atau klik tombol search
         search_box.send_keys(Keys.ENTER)
+        
+        # Alternatif: Klik tombol ikon kaca pembesar jika enter tidak memicu form
+        try:
+            search_btn = driver.find_element(By.CSS_SELECTOR, "button.main-form__field-download")
+            search_btn.click()
+        except:
+            pass
 
-        print("Menunggu hasil pencarian dimuat...")
-        time.sleep(6)  # Beri waktu render halaman hasil
+        print("Menunggu halaman profil dan galeri termuat...")
+        
+        # Tunggu sampai elemen profil atau list postingan muncul di halaman (maksimal 15 detik)
+        WebDriverWait(driver, 15).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, "li.profile-media-list__item, .output-profile"))
+        )
+        
+        # Beri tambahan waktu agar semua gambar dan post ter-render JavaScript
+        time.sleep(5)
 
-        # Scroll sedikit ke bawah untuk memicu lazy loading galeri postingan
-        driver.execute_script("window.scrollBy(0, 600);")
+        # Scroll ke bawah untuk memicu lazy loading tambahan
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight/2);")
         time.sleep(3)
 
-        # 2. Parsing HTML menggunakan BeautifulSoup
+        # 2. Parsing HTML
         soup = BeautifulSoup(driver.page_source, "html.parser")
-
-        # Mengambil elemen list postingan berdasarkan struktur HTML Picuki
         items = soup.select("li.profile-media-list__item")
         print(f"Ditemukan {len(items)} item postingan di halaman profil.")
 
         for item in items:
             try:
-                # Ambil URL gambar preview
                 img_tag = item.select_one("img.media-content__image")
-                img_url = (
-                    img_tag["src"] if img_tag and "src" in img_tag.attrs else ""
-                )
+                img_url = img_tag["src"] if img_tag and "src" in img_tag.attrs else ""
 
-                # Ambil teks caption
                 caption_tag = item.select_one("p.media-content__caption")
-                caption = (
-                    caption_tag.text.strip()
-                    if caption_tag
-                    else "Postingan Pemkab OKU Selatan"
-                )
+                caption = caption_tag.text.strip() if caption_tag else "Postingan Pemkab OKU Selatan"
 
-                # Ambil jumlah likes
                 likes_tag = item.select_one("p.media-content__meta-like")
-                likes = (
-                    likes_tag.text.strip()
-                    if likes_tag
-                    else "0"
-                )
+                likes = likes_tag.text.strip() if likes_tag else "0"
 
-                # Ambil waktu postingan
                 time_tag = item.select_one("p.media-content__meta-time")
-                post_time = (
-                    time_tag.text.strip() if time_tag else ""
-                )
+                post_time = time_tag.text.strip() if time_tag else ""
 
-                # Ambil link unduh asli jika tersedia
                 download_btn = item.select_one("a.download-btn")
-                download_url = (
-                    download_btn["href"]
-                    if download_btn and "href" in download_btn.attrs
-                    else ""
-                )
+                download_url = download_btn["href"] if download_btn and "href" in download_btn.attrs else ""
 
                 if img_url:
                     posts.append(
@@ -118,15 +115,19 @@ def scrape_picuki_with_exact_html():
         with open(file_path, "w", encoding="utf-8") as f:
             json.dump(posts, f, ensure_ascii=False, indent=4)
 
-        print(
-            f"BERHASIL! Menyimpan {len(posts)} data postingan asli ke {file_path}"
-        )
+        print(f"BERHASIL! Menyimpan {len(posts)} data postingan ke {file_path}")
 
     except Exception as e:
         print(f"Terjadi error saat proses scraping: {e}")
+        # Ambil screenshot jika gagal untuk bahan investigasi
+        try:
+            driver.save_screenshot("data/error_screenshot.png")
+            print("Screenshot error disimpan ke data/error_screenshot.png")
+        except:
+            pass
     finally:
         driver.quit()
 
 
 if __name__ == "__main__":
-    scrape_picuki_with_exact_html()
+    scrape_picuki_with_wait()
