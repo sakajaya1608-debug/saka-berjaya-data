@@ -2,12 +2,16 @@ name: Auto Scrape Picuki Selenium
 
 on:
   schedule:
-    - cron: '0 0 * * *' # Berjalan otomatis setiap hari jam 00:00 UTC
-  workflow_dispatch: # Memungkinkan tombol 'Run workflow' manual di tab Actions
+    - cron: '0 0 * * *'
+  workflow_dispatch:
 
 jobs:
   scrape:
     runs-on: ubuntu-latest
+
+    # Tambahkan bagian permissions ini
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout Repository
