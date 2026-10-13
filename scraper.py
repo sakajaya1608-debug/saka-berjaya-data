@@ -1,123 +1,81 @@
-"""
-Scraper Instagram untuk berita Pemda OKU Selatan.
-Menggunakan Playwright untuk meniru browser sungguhan.
-"""
-
 import json
-import sys
-import traceback
-from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
+import os
+import re
+import requests
+from bs4 import BeautifulSoup
 
-# ==========================================
-# KONFIGURASI
-# ==========================================
-IG_USERNAME = "pemkab_okuselatan"
-MAX_POSTS = 20
-OUTPUT_FILE = "berita.json"
+# Target username Picuki
+USERNAME = "pemdaokuselatan"
+URL = f"https://www.picuki.com/profile/{USERNAME}"
+
+HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/120.0.0.0 Safari/537.36"
+    )
+}
 
 
-# ==========================================
-# FUNGSI SCRAPING DENGAN PLAYWRIGHT
-# ==========================================
-def scrape():
-    print(f"Mulai scraping Instagram @{IG_USERNAME} dengan Playwright...")
+def scrape_picuki():
+    print(f"Mulai mengambil data dari {URL}...")
+    response = requests.get(URL, headers=HEADERS)
 
-    berita_list = []
+    if response.status_code != 200:
+        print(f"Gagal mengakses halaman. Status code: {response.status_code}")
+        return
 
-    with sync_playwright() as p:
-        # Luncurkan browser Chromium (headless = tidak tampil GUI)
-        browser = p.chromium.launch(headless=True)
+    soup = BeautifulSoup(response.text, "html.parser")
+    posts = []
 
-        # Buat konteks browser dengan user-agent umum agar tidak dicurigai
-        context = browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            viewport={"width": 1280, "height": 800},
-            locale="id-ID",
-        )
+    # Mengambil elemen-elemen postingan di Picuki
+    post_cards = soup.select(".box-photos .box-photo")
 
-        page = context.new_page()
-
+    for card in post_cards:
         try:
-            # 1. Buka halaman profil Instagram
-            url = f"https://www.instagram.com/{IG_USERNAME}/"
-            print(f"Membuka {url} ...")
-            page.goto(url, wait_until="networkidle", timeout=60000)
-            page.wait_for_timeout(5000)  # tunggu tambahan agar JavaScript selesai
+            # Link ke detail postingan
+            link = card.select_one("a.photo")["href"]
+            # URL gambar/media
+            img_tag = card.select_one("img.post-image")
+            img_url = img_tag["src"] if img_tag else ""
+            # Deskripsi/caption
+            caption_tag = card.select_one(".photo-description")
+            caption = caption_tag.text.strip() if caption_tag else ""
+            # Jumlah likes & komentar
+            likes = (
+                card.select_one(".likes-photo-box").text.strip()
+                if card.select_one(".likes-photo-box")
+                else "0"
+            )
+            comments = (
+                card.select_one(".comments-photo-box").text.strip()
+                if card.select_one(".comments-photo-box")
+                else "0"
+            )
 
-            # 2. Cari elemen postingan (link ke /p/ atau /reel/)
-            # Selector ini mencari tautan postingan di halaman profil
-            post_links = page.query_selector_all('a[href*="/p/"], a[href*="/reel/"]')
-
-            # Kumpulkan shortcode unik
-            shortcodes = set()
-            for link in post_links[:MAX_POSTS * 2]:  # ambil lebih untuk jaga-jaga
-                href = link.get_attribute("href")
-                if href and ("/p/" in href or "/reel/" in href):
-                    # Ekstrak shortcode dari URL, misal /p/ABC123/
-                    parts = href.strip("/").split("/")
-                    if len(parts) >= 2:
-                        shortcodes.add(parts[-1])
-
-            print(f"Ditemukan {len(shortcodes)} shortcode postingan.")
-
-            # 3. Kunjungi setiap postingan untuk mengambil detail
-            for sc in list(shortcodes)[:MAX_POSTS]:
-                try:
-                    post_url = f"https://www.instagram.com/p/{sc}/"
-                    page.goto(post_url, wait_until="networkidle", timeout=30000)
-                    page.wait_for_timeout(3000)
-
-                    # Ambil caption dari meta description (paling stabil)
-                    meta_desc = page.query_selector('meta[property="og:description"]')
-                    caption = meta_desc.get_attribute("content") if meta_desc else ""
-
-                    # Ambil URL gambar dari meta og:image
-                    meta_img = page.query_selector('meta[property="og:image"]')
-                    img_url = meta_img.get_attribute("content") if meta_img else ""
-
-                    # Ambil judul dari caption (baris pertama)
-                    judul = caption.split("\n")[0].strip() if caption else "(Tanpa judul)"
-                    if len(judul) > 120:
-                        judul = judul[:120] + "..."
-
-                    berita_list.append({
-                        "id": sc,
-                        "judul": judul,
-                        "caption": caption,
-                        "url_gambar": img_url,
-                        "url_post": f"https://www.instagram.com/p/{sc}/",
-                        "timestamp": 0,  # Playwright tidak mudah ambil timestamp, bisa diisi manual
-                        "likes": 0,
-                        "comments": 0,
-                    })
-                    print(f"  ✓ Post {sc} diambil.")
-                except Exception as e:
-                    print(f"  ✗ Gagal ambil post {sc}: {e}")
-                    continue
-
-        except PlaywrightTimeout:
-            print("ERROR: Timeout saat memuat halaman Instagram.")
+            posts.append(
+                {
+                    "link": link,
+                    "image_url": img_url,
+                    "caption": caption,
+                    "likes": likes,
+                    "comments": comments,
+                }
+            )
         except Exception as e:
-            print(f"ERROR: {e}")
-            traceback.print_exc()
-        finally:
-            browser.close()
+            print(f"Error parsing card: {e}")
+            continue
 
-    print(f"Total berita berhasil diambil: {len(berita_list)}")
-    return berita_list
+    # Simpan ke file JSON
+    os.makedirs("data", exist_ok=True)
+    file_path = "data/posts.json"
+    with open(file_path, "w", encoding="utf-8") as f:
+        json.dump(posts, f, ensure_ascii=False, indent=4)
 
-
-# ==========================================
-# MAIN
-# ==========================================
-def main():
-    berita = scrape()
-
-    with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
-        json.dump(berita, f, ensure_ascii=False, indent=2)
-
-    print(f"✅ Disimpan ke {OUTPUT_FILE} ({len(berita)} berita).")
+    print(
+        f"Berhasil mengunduh {len(posts)} postingan dan disimpan ke {file_path}"
+    )
 
 
 if __name__ == "__main__":
-    main()
+    scrape_picuki()
