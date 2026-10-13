@@ -3,12 +3,14 @@ import os
 import time
 from bs4 import BeautifulSoup
 from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
 
 USERNAME = "pemkab_okuselatan"
-URL = f"https://picuki.site/id/profile/{USERNAME}"
+BASE_URL = "https://picuki.site/id/"
 
 
 def get_driver():
@@ -17,7 +19,6 @@ def get_driver():
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--window-size=1920,1080")
-    # Stealth User-Agent
     options.add_argument(
         "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
     )
@@ -28,57 +29,74 @@ def get_driver():
     return driver
 
 
-def debug_and_scrape():
-    print(f"Mengakses {URL}...")
+def scrape_picuki_from_search():
     driver = get_driver()
+    posts = []
 
     try:
-        driver.get(URL)
-        time.sleep(7)  # Beri waktu render lebih lama
+        print(f"Membuka {BASE_URL}...")
+        driver.get(BASE_URL)
+        time.sleep(3)
 
-        os.makedirs("data", exist_ok=True)
+        # 1. Cari input box di halaman Picuki dan masukkan username
+        search_box = driver.find_element(
+            By.CSS_SELECTOR, "input[type='text'], input[placeholder*='Search']"
+        )
+        search_box.clear()
+        search_box.send_keys(USERNAME)
+        search_box.send_keys(Keys.ENTER)
 
-        # 1. Simpan screenshot untuk melihat apakah ada Cloudflare/CAPTCHA
-        driver.save_screenshot("data/debug_screenshot.png")
-        print("Screenshot disimpan ke data/debug_screenshot.png")
+        print("Menunggu hasil pencarian dimuat...")
+        time.sleep(6)  # Beri waktu JS merender 'Hasil pencarian'
 
-        # 2. Simpan sumber HTML mentah
-        html_content = driver.page_source
-        with open("data/debug_page.html", "w", encoding="utf-8") as f:
-            f.write(html_content)
-        print("HTML disimpan ke data/debug_page.html")
+        # Scroll sedikit ke bawah agar postingan ter-load (lazy loading)
+        driver.execute_script("window.scrollBy(0, 500);")
+        time.sleep(3)
 
-        soup = BeautifulSoup(html_content, "html.parser")
+        # 2. Parse HTML yang sudah dirender oleh JavaScript
+        soup = BeautifulSoup(driver.page_source, "html.parser")
 
-        # Cetak Judul Halaman
-        print("Judul Halaman yang didapat:", driver.title)
+        # Cari semua gambar postingan di bawah area hasil pencarian
+        # Mengabaikan foto profil (logo OKU Selatan)
+        img_tags = soup.find_all("img")
 
-        # Coba ambil semua tag <a> dan <img> untuk analisa fleksibel
-        posts = []
-        # Cari semua link yang mengandung kata /post/ atau gambar postingan
-        images = soup.find_all("img")
-        print(f"Total tag <img> di halaman: {len(images)}")
+        print(f"Total tag <img> ditemukan: {len(img_tags)}")
 
-        for img in images:
+        for img in img_tags:
             src = img.get("src", "")
             alt = img.get("alt", "")
-            # Abaikan logo, avatar, atau ikon kecil
-            if src and not any(
-                x in src.lower() for x in ["logo", "avatar", "icon", "svg"]
-            ):
-                posts.append({"image_url": src, "caption": alt})
 
+            # Filter agar hanya mengambil gambar postingan, bukan avatar / logo / icon
+            if src and not any(
+                x in src.lower()
+                for x in ["logo", "avatar", "icon", "svg", "404", "error"]
+            ):
+                # Ambil URL penuh jika src berupa path relatif
+                if src.startswith("/"):
+                    src = "https://picuki.site" + src
+
+                posts.append(
+                    {
+                        "image_url": src,
+                        "caption": alt if alt else "Postingan Pemkab OKU Selatan",
+                    }
+                )
+
+        # Simpan hasil ke data/posts.json
+        os.makedirs("data", exist_ok=True)
         file_path = "data/posts.json"
         with open(file_path, "w", encoding="utf-8") as f:
             json.dump(posts, f, ensure_ascii=False, indent=4)
 
-        print(f"Tersimpan {len(posts)} item ke {file_path}")
+        print(
+            f"BERHASIL! Menyimpan {len(posts)} data postingan ke {file_path}"
+        )
 
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"Terjadi error saat proses scraping: {e}")
     finally:
         driver.quit()
 
 
 if __name__ == "__main__":
-    debug_and_scrape()
+    scrape_picuki_from_search()
