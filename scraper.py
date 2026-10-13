@@ -1,80 +1,79 @@
 import json
 import os
-import re
 import requests
 from bs4 import BeautifulSoup
 
-# Target username Picuki
-USERNAME = "pemdaokuselatan"
+# Username yang benar sesuai informasi Anda
+USERNAME = "pemkab_okuselatan"
 URL = f"https://www.picuki.com/profile/{USERNAME}"
 
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/120.0.0.0 Safari/537.36"
-    )
+        "Chrome/122.0.0.0 Safari/537.36"
+    ),
+    "Accept-Language": "id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7",
 }
 
 
 def scrape_picuki():
     print(f"Mulai mengambil data dari {URL}...")
-    response = requests.get(URL, headers=HEADERS)
+    try:
+        response = requests.get(URL, headers=HEADERS, timeout=10)
+        print(f"Status Code: {response.status_code}")
 
-    if response.status_code != 200:
-        print(f"Gagal mengakses halaman. Status code: {response.status_code}")
-        return
-
-    soup = BeautifulSoup(response.text, "html.parser")
-    posts = []
-
-    # Mengambil elemen-elemen postingan di Picuki
-    post_cards = soup.select(".box-photos .box-photo")
-
-    for card in post_cards:
-        try:
-            # Link ke detail postingan
-            link = card.select_one("a.photo")["href"]
-            # URL gambar/media
-            img_tag = card.select_one("img.post-image")
-            img_url = img_tag["src"] if img_tag else ""
-            # Deskripsi/caption
-            caption_tag = card.select_one(".photo-description")
-            caption = caption_tag.text.strip() if caption_tag else ""
-            # Jumlah likes & komentar
-            likes = (
-                card.select_one(".likes-photo-box").text.strip()
-                if card.select_one(".likes-photo-box")
-                else "0"
+        if response.status_code != 200:
+            print(
+                f"Gagal mengakses halaman. Server merespon dengan status: {response.status_code}"
             )
-            comments = (
-                card.select_one(".comments-photo-box").text.strip()
-                if card.select_one(".comments-photo-box")
-                else "0"
+            return
+
+        soup = BeautifulSoup(response.text, "html.parser")
+        posts = []
+
+        # Mencari kontainer postingan di Picuki (mendukung beberapa variasi class)
+        post_cards = soup.select(".post-item, .box-photo, .content-profile")
+
+        if not post_cards:
+            print(
+                "Peringatan: Tidak ditemukan elemen postingan. Kemungkinan struktur HTML Picuki berubah atau diblokir."
             )
+            # Debugging kecil untuk melihat judul halaman
+            print("Judul Halaman:", soup.title.string if soup.title else "No Title")
 
-            posts.append(
-                {
-                    "link": link,
-                    "image_url": img_url,
-                    "caption": caption,
-                    "likes": likes,
-                    "comments": comments,
-                }
-            )
-        except Exception as e:
-            print(f"Error parsing card: {e}")
-            continue
+        for card in post_cards:
+            try:
+                link_elem = card.select_one("a.photo, a")
+                link = link_elem["href"] if link_elem and "href" in link_elem.attrs else ""
 
-    # Simpan ke file JSON
-    os.makedirs("data", exist_ok=True)
-    file_path = "data/posts.json"
-    with open(file_path, "w", encoding="utf-8") as f:
-        json.dump(posts, f, ensure_ascii=False, indent=4)
+                img_tag = card.select_one("img.post-image, img")
+                img_url = img_tag["src"] if img_tag and "src" in img_tag.attrs else ""
 
-    print(
-        f"Berhasil mengunduh {len(posts)} postingan dan disimpan ke {file_path}"
-    )
+                caption_tag = card.select_one(".photo-description, .text")
+                caption = caption_tag.text.strip() if caption_tag else ""
+
+                posts.append(
+                    {
+                        "link": link,
+                        "image_url": img_url,
+                        "caption": caption,
+                    }
+                )
+            except Exception as e:
+                print(f"Error parsing item: {e}")
+                continue
+
+        # Simpan ke folder data
+        os.makedirs("data", exist_ok=True)
+        file_path = "data/posts.json"
+        with open(file_path, "w", encoding="utf-8") as f:
+            json.dump(posts, f, ensure_ascii=False, indent=4)
+
+        print(f"Berhasil menyimpan {len(posts)} data ke {file_path}")
+
+    except Exception as e:
+        print(f"Terjadi kesalahan koneksi atau eksekusi: {e}")
 
 
 if __name__ == "__main__":
