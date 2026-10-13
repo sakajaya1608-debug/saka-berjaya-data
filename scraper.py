@@ -3,14 +3,13 @@ import os
 import time
 from bs4 import BeautifulSoup
 from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
 
 USERNAME = "pemkab_okuselatan"
-BASE_URL = "https://picuki.site/id/"
+# Langsung gunakan URL pencarian spesifik picuki.site
+SEARCH_URL = f"https://picuki.site/id/search?q={USERNAME}"
 
 
 def get_driver():
@@ -29,58 +28,30 @@ def get_driver():
     return driver
 
 
-def scrape_picuki_correctly():
+def scrape_picuki_direct_search():
     driver = get_driver()
     posts = []
 
     try:
-        print(f"Membuka {BASE_URL}...")
-        driver.get(BASE_URL)
-        time.sleep(3)
+        print(f"Membuka URL pencarian: {SEARCH_URL}")
+        driver.get(SEARCH_URL)
+        time.sleep(6)  # Beri waktu render halaman hasil pencarian
 
-        # 1. Cari input pencarian dan masukkan username
-        search_box = driver.find_element(
-            By.CSS_SELECTOR, "input[type='text'], input"
-        )
-        search_box.clear()
-        search_box.send_keys(USERNAME)
-        search_box.send_keys(Keys.ENTER)
-
-        print("Menunggu halaman hasil pencarian...")
-        time.sleep(5)
-
-        # 2. KLIK LINK PROFIL YANG MUNCUL PADA HASIL PENCARIAN
-        # Berdasarkan gambar sebelumnya, kartu profil memiliki link yang mengarah ke profil akun
-        try:
-            profile_link = driver.find_element(
-                By.XPATH, f"//a[contains(@href, '/profile/{USERNAME}')]"
-            )
-            print("Profil ditemukan, mengklik tautan profil...")
-            profile_link.click()
-            time.sleep(6)  # Tunggu halaman galeri profil terbuka
-        except Exception as e:
-            print(
-                f"Gagal klik elemen profil otomatis, mencoba navigasi langsung URL: {e}"
-            )
-            driver.get(f"https://picuki.site/id/profile/{USERNAME}")
-            time.sleep(6)
-
-        # Scroll ke bawah agar postingan di tab 'POSTS' ter-load (lazy loading)
+        # Scroll ke bawah untuk memastikan gambar termuat (lazy loading)
         driver.execute_script("window.scrollBy(0, 800);")
         time.sleep(3)
 
-        # 3. Parse HTML dari halaman galeri postingan
         soup = BeautifulSoup(driver.page_source, "html.parser")
-        img_tags = soup.find_all("img")
 
-        print(f"Total tag <img> di halaman profil: {len(img_tags)}")
+        # Cari semua elemen gambar di halaman hasil pencarian
+        img_tags = soup.find_all("img")
+        print(f"Total tag <img> ditemukan: {len(img_tags)}")
 
         for img in img_tags:
             src = img.get("src", "")
             alt = img.get("alt", "")
 
-            # Filter ketat: Hanya ambil gambar postingan (biasanya dari CDN Instagram atau storage post)
-            # Buang logo, avatar, ikon, dan error page
+            # Filter ketat untuk membuang aset bawaan web (logo, icon, photos.png, dll)
             if src and not any(
                 x in src.lower()
                 for x in [
@@ -91,6 +62,7 @@ def scrape_picuki_correctly():
                     "404",
                     "error",
                     "photos.png",
+                    "default",
                 ]
             ):
                 if src.startswith("/"):
@@ -103,14 +75,14 @@ def scrape_picuki_correctly():
                     }
                 )
 
-        # Simpan ke file JSON
+        # Simpan ke folder data/posts.json
         os.makedirs("data", exist_ok=True)
         file_path = "data/posts.json"
         with open(file_path, "w", encoding="utf-8") as f:
             json.dump(posts, f, ensure_ascii=False, indent=4)
 
         print(
-            f"BERHASIL! Menyimpan {len(posts)} data postingan asli ke {file_path}"
+            f"BERHASIL! Menyimpan {len(posts)} data postingan ke {file_path}"
         )
 
     except Exception as e:
@@ -120,4 +92,4 @@ def scrape_picuki_correctly():
 
 
 if __name__ == "__main__":
-    scrape_picuki_correctly()
+    scrape_picuki_direct_search()
