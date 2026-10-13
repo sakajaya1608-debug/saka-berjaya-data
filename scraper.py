@@ -4,7 +4,6 @@ import time
 from bs4 import BeautifulSoup
 from selenium import webdriver
 from selenium.webdriver.common.by import By
-from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
@@ -12,7 +11,8 @@ from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
 
 USERNAME = "pemkab_okuselatan"
-BASE_URL = "https://picuki.site/id/"
+# Langsung arahkan ke URL hasil pencarian dengan parameter query target
+TARGET_URL = f"https://picuki.site/id/?s={USERNAME}"
 
 
 def get_driver():
@@ -31,49 +31,29 @@ def get_driver():
     return driver
 
 
-def scrape_picuki_with_wait():
+def scrape_picuki_direct():
     driver = get_driver()
     posts = []
 
     try:
-        print(f"Membuka {BASE_URL}...")
-        driver.get(BASE_URL)
-        time.sleep(3)
-
-        # 1. Masukkan username ke kotak pencarian
-        search_box = WebDriverWait(driver, 10).until(
-            EC.presence_of_element_located(
-                (By.CSS_SELECTOR, "input.main-form__input, input[type='text']")
-            )
-        )
-        search_box.clear()
-        search_box.send_keys(USERNAME)
+        print(f"Membuka URL langsung: {TARGET_URL}")
+        driver.get(TARGET_URL)
         
-        # Tekan tombol enter atau klik tombol search
-        search_box.send_keys(Keys.ENTER)
-        
-        # Alternatif: Klik tombol ikon kaca pembesar jika enter tidak memicu form
-        try:
-            search_btn = driver.find_element(By.CSS_SELECTOR, "button.main-form__field-download")
-            search_btn.click()
-        except:
-            pass
-
         print("Menunggu halaman profil dan galeri termuat...")
         
-        # Tunggu sampai elemen profil atau list postingan muncul di halaman (maksimal 15 detik)
+        # Tunggu hingga elemen list postingan muncul di halaman
         WebDriverWait(driver, 15).until(
             EC.presence_of_element_located((By.CSS_SELECTOR, "li.profile-media-list__item, .output-profile"))
         )
         
-        # Beri tambahan waktu agar semua gambar dan post ter-render JavaScript
+        # Beri waktu tambahan agar skrip merender semua gambar post
         time.sleep(5)
 
         # Scroll ke bawah untuk memicu lazy loading tambahan
         driver.execute_script("window.scrollTo(0, document.body.scrollHeight/2);")
         time.sleep(3)
 
-        # 2. Parsing HTML
+        # Parsing HTML
         soup = BeautifulSoup(driver.page_source, "html.parser")
         items = soup.select("li.profile-media-list__item")
         print(f"Ditemukan {len(items)} item postingan di halaman profil.")
@@ -119,7 +99,6 @@ def scrape_picuki_with_wait():
 
     except Exception as e:
         print(f"Terjadi error saat proses scraping: {e}")
-        # Ambil screenshot jika gagal untuk bahan investigasi
         try:
             driver.save_screenshot("data/error_screenshot.png")
             print("Screenshot error disimpan ke data/error_screenshot.png")
@@ -130,4 +109,4 @@ def scrape_picuki_with_wait():
 
 
 if __name__ == "__main__":
-    scrape_picuki_with_wait()
+    scrape_picuki_direct()
