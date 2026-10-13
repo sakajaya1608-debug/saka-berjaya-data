@@ -29,7 +29,7 @@ def get_driver():
     return driver
 
 
-def scrape_picuki_from_search():
+def scrape_picuki_correctly():
     driver = get_driver()
     posts = []
 
@@ -38,40 +38,61 @@ def scrape_picuki_from_search():
         driver.get(BASE_URL)
         time.sleep(3)
 
-        # 1. Cari input box di halaman Picuki dan masukkan username
+        # 1. Cari input pencarian dan masukkan username
         search_box = driver.find_element(
-            By.CSS_SELECTOR, "input[type='text'], input[placeholder*='Search']"
+            By.CSS_SELECTOR, "input[type='text'], input"
         )
         search_box.clear()
         search_box.send_keys(USERNAME)
         search_box.send_keys(Keys.ENTER)
 
-        print("Menunggu hasil pencarian dimuat...")
-        time.sleep(6)  # Beri waktu JS merender 'Hasil pencarian'
+        print("Menunggu halaman hasil pencarian...")
+        time.sleep(5)
 
-        # Scroll sedikit ke bawah agar postingan ter-load (lazy loading)
-        driver.execute_script("window.scrollBy(0, 500);")
+        # 2. KLIK LINK PROFIL YANG MUNCUL PADA HASIL PENCARIAN
+        # Berdasarkan gambar sebelumnya, kartu profil memiliki link yang mengarah ke profil akun
+        try:
+            profile_link = driver.find_element(
+                By.XPATH, f"//a[contains(@href, '/profile/{USERNAME}')]"
+            )
+            print("Profil ditemukan, mengklik tautan profil...")
+            profile_link.click()
+            time.sleep(6)  # Tunggu halaman galeri profil terbuka
+        except Exception as e:
+            print(
+                f"Gagal klik elemen profil otomatis, mencoba navigasi langsung URL: {e}"
+            )
+            driver.get(f"https://picuki.site/id/profile/{USERNAME}")
+            time.sleep(6)
+
+        # Scroll ke bawah agar postingan di tab 'POSTS' ter-load (lazy loading)
+        driver.execute_script("window.scrollBy(0, 800);")
         time.sleep(3)
 
-        # 2. Parse HTML yang sudah dirender oleh JavaScript
+        # 3. Parse HTML dari halaman galeri postingan
         soup = BeautifulSoup(driver.page_source, "html.parser")
-
-        # Cari semua gambar postingan di bawah area hasil pencarian
-        # Mengabaikan foto profil (logo OKU Selatan)
         img_tags = soup.find_all("img")
 
-        print(f"Total tag <img> ditemukan: {len(img_tags)}")
+        print(f"Total tag <img> di halaman profil: {len(img_tags)}")
 
         for img in img_tags:
             src = img.get("src", "")
             alt = img.get("alt", "")
 
-            # Filter agar hanya mengambil gambar postingan, bukan avatar / logo / icon
+            # Filter ketat: Hanya ambil gambar postingan (biasanya dari CDN Instagram atau storage post)
+            # Buang logo, avatar, ikon, dan error page
             if src and not any(
                 x in src.lower()
-                for x in ["logo", "avatar", "icon", "svg", "404", "error"]
+                for x in [
+                    "logo",
+                    "avatar",
+                    "icon",
+                    "svg",
+                    "404",
+                    "error",
+                    "photos.png",
+                ]
             ):
-                # Ambil URL penuh jika src berupa path relatif
                 if src.startswith("/"):
                     src = "https://picuki.site" + src
 
@@ -82,14 +103,14 @@ def scrape_picuki_from_search():
                     }
                 )
 
-        # Simpan hasil ke data/posts.json
+        # Simpan ke file JSON
         os.makedirs("data", exist_ok=True)
         file_path = "data/posts.json"
         with open(file_path, "w", encoding="utf-8") as f:
             json.dump(posts, f, ensure_ascii=False, indent=4)
 
         print(
-            f"BERHASIL! Menyimpan {len(posts)} data postingan ke {file_path}"
+            f"BERHASIL! Menyimpan {len(posts)} data postingan asli ke {file_path}"
         )
 
     except Exception as e:
@@ -99,4 +120,4 @@ def scrape_picuki_from_search():
 
 
 if __name__ == "__main__":
-    scrape_picuki_from_search()
+    scrape_picuki_correctly()
