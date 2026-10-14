@@ -1,130 +1,164 @@
-import json
+"""
+Script untuk scraping Instagram @pemkab_okuselatan via Apify
+dan menyimpan hasilnya ke Firebase Realtime Database.
+
+Berjalan otomatis via GitHub Actions setiap hari jam 06:00 WIB.
+"""
+
 import os
+import json
 import time
-from bs4 import BeautifulSoup
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.chrome.service import Service
-from webdriver_manager.chrome import ChromeDriverManager
+from datetime import datetime, timezone
 
-USERNAME = "pemkab_okuselatan"
-BASE_URL = "https://picuki.site/id/"
+import firebase_admin
+from firebase_admin import credentials, db
+from apify_client import ApifyClient
+
+# ============================================================
+# KONFIGURASI
+# ============================================================
+
+APIFY_TOKEN = os.environ.get("APIFY_TOKEN")
+FIREBASE_SERVICE_ACCOUNT = os.environ.get("FIREBASE_SERVICE_ACCOUNT")
+
+# Nama Actor Instagram Scraper (bisa diganti)
+ACTOR_ID = "apify/instagram-scraper"
+
+# URL target
+INSTAGRAM_URL = "https://www.instagram.com/pemkab_okuselatan/"
+
+# Jumlah post yang diambil
+RESULTS_LIMIT = 12
+
+# URL Firebase Realtime Database
+FIREBASE_DB_URL = "https://sakajaya-af9d5-default-rtdb.asia-southeast1.firebasedatabase.app"
+
+# Path di Firebase
+FIREBASE_PATH = "berita_cache"
 
 
-def get_driver():
-    options = Options()
-    options.add_argument("--headless=new")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--window-size=1920,1080")
-    options.add_argument(
-        "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-    )
+# ============================================================
+# FUNGSI UTAMA
+# ============================================================
 
-    driver = webdriver.Chrome(
-        service=Service(ChromeDriverManager().install()), options=options
-    )
-    return driver
+def main():
+    print("=" * 60)
+    print("SAKA BERJAYA — Instagram Scraper")
+    print("=" * 60)
+
+    # Validasi environment
+    if not APIFY_TOKEN:
+        raise ValueError("APIFY_TOKEN tidak di-set di environment!")
+    if not FIREBASE_SERVICE_ACCOUNT:
+        raise ValueError("FIREBASE_SERVICE_ACCOUNT tidak di-set di environment!")
+
+    # ----------------------------------------
+    # 1. Jalankan Apify Actor
+    # ----------------------------------------
+    print("\n[1/3] Menjalankan Apify Actor...")
+    posts = run_apify_actor()
+    print(f"    ✅ Berhasil mengambil {len(posts)} post dari Instagram")
+
+    if not posts:
+        print("    ⚠️  Tidak ada post yang diambil. Batalkan.")
+        return
+
+    # ----------------------------------------
+    # 2. Parse & bersihkan data
+    # ----------------------------------------
+    print("\n[2/3] Memproses data...")
+    cleaned = [clean_post(p) for p in posts]
+    print(f"    ✅ {len(cleaned)} post siap disimpan")
+
+    # ----------------------------------------
+    # 3. Simpan ke Firebase
+    # ----------------------------------------
+    print("\n[3/3] Menyimpan ke Firebase Realtime Database...")
+    save_to_firebase(cleaned)
+    print("    ✅ Data berhasil disimpan")
+
+    print("\n" + "=" * 60)
+    print("SELESAI")
+    print("=" * 60)
 
 
-def scrape_picuki_click_search():
-    driver = get_driver()
-    posts = []
+def run_apify_actor():
+    """Menjalankan Apify Actor dan mengembalikan daftar post."""
+    client = ApifyClient(APIFY_TOKEN)
 
-    try:
-        print(f"Membuka {BASE_URL}...")
-        driver.get(BASE_URL)
-        time.sleep(3)
+    # Input sesuai skema Actor Instagram Scraper
+    run_input = {
+        "directUrls": [INSTAGRAM_URL],
+        "resultsType": "posts",
+        "resultsLimit": RESULTS_LIMIT,
+        "proxyConfiguration": {
+            "useApifyProxy": True,
+        },
+    }
 
-        # 1. Ketik username pada input form
-        print("Mencari kolom input pencarian...")
-        search_input = driver.find_element(
-            By.CSS_SELECTOR, "input.main-form__input"
-        )
-        search_input.click()
-        search_input.clear()
-        for char in USERNAME:
-            search_input.send_keys(char)
-            time.sleep(0.05)
+    print(f"    Actor: {ACTOR_ID}")
+    print(f"    Target: {INSTAGRAM_URL}")
+    print(f"    Limit: {RESULTS_LIMIT} post")
 
-        print(f"Berhasil mengetik username: {USERNAME}")
+    # Jalankan Actor
+    run = client.actor(ACTOR_ID).call(run_input=run_input)
 
-        # 2. Klik tombol pencarian (ikon kaca pembesar) secara eksplisit
-        print("Mengklik tombol pencarian...")
-        search_btn = driver.find_element(
-            By.CSS_SELECTOR, "button.main-form__field-download"
-        )
-        search_btn.click()
+    if not run:
+        raise RuntimeError("Apify Actor gagal dijalankan")
 
-        print("Menunggu hasil pencarian dimuat oleh JavaScript (12 detik)...")
-        time.sleep(12)  # Beri waktu render hasil pencarian muncul
+    print(f"    Run ID: {run.get('id')}")
+    print(f"    Status: {run.get('status')}")
 
-        # Scroll ke bawah untuk memicu lazy loading tambahan
-        driver.execute_script("window.scrollTo(0, document.body.scrollHeight / 2);")
-        time.sleep(4)
+    if run.get("status") != "SUCCEEDED":
+        raise RuntimeError(f"Apify Actor tidak sukses: {run.get('status')}")
 
-        # 3. Parsing HTML hasil render
-        soup = BeautifulSoup(driver.page_source, "html.parser")
-        items = soup.select("li.profile-media-list__item")
-        print(f"Ditemukan {len(items)} item postingan di halaman profil.")
+    # Ambil hasil dari dataset
+    dataset_id = run.get("defaultDatasetId")
+    items = list(client.dataset(dataset_id).iterate_items())
 
-        for item in items:
-            try:
-                img_tag = item.select_one("img.media-content__image")
-                img_url = (
-                    img_tag["src"] if img_tag and "src" in img_tag.attrs else ""
-                )
+    return items
 
-                caption_tag = item.select_one("p.media-content__caption")
-                caption = (
-                    caption_tag.text.strip()
-                    if caption_tag
-                    else "Postingan Pemkab OKU Selatan"
-                )
 
-                likes_tag = item.select_one("p.media-content__meta-like")
-                likes = likes_tag.text.strip() if likes_tag else "0"
+def clean_post(post):
+    """Bersihkan & standarisasi field post."""
+    # Coba berbagai kemungkinan nama field
+    return {
+        "id": post.get("id") or post.get("shortCode") or "",
+        "caption": post.get("caption") or "",
+        "imageUrl": post.get("displayUrl") or post.get("imageUrl") or "",
+        "postUrl": post.get("url") or f"https://www.instagram.com/p/{post.get('shortCode', '')}/",
+        "timestamp": post.get("timestamp") or int(time.time()),
+        "likeCount": post.get("likesCount") or post.get("likes") or 0,
+        "commentCount": post.get("commentsCount") or post.get("comments") or 0,
+        "ownerUsername": post.get("ownerUsername") or "pemkab_okuselatan",
+    }
 
-                time_tag = item.select_one("p.media-content__meta-time")
-                post_time = time_tag.text.strip() if time_tag else ""
 
-                download_btn = item.select_one("a.download-btn")
-                download_url = (
-                    download_btn["href"]
-                    if download_btn and "href" in download_btn.attrs
-                    else ""
-                )
+def save_to_firebase(posts):
+    """Simpan data ke Firebase Realtime Database."""
+    # Init Firebase
+    cred = credentials.Certificate(json.loads(FIREBASE_SERVICE_ACCOUNT))
+    firebase_admin.initialize_app(cred, {"databaseURL": FIREBASE_DB_URL})
 
-                if img_url:
-                    posts.append(
-                        {
-                            "image_url": img_url,
-                            "caption": caption,
-                            "likes": likes,
-                            "time": post_time,
-                            "download_url": download_url,
-                        }
-                    )
-            except Exception as e:
-                print(f"Error saat memparsing item: {e}")
-                continue
+    # Data yang akan disimpan
+    data = {
+        "updatedAt": int(time.time() * 1000),
+        "updatedAtISO": datetime.now(timezone.utc).isoformat(),
+        "count": len(posts),
+        "posts": {p["id"]: p for p in posts if p["id"]},
+    }
 
-        # Simpan ke folder data/posts.json
-        os.makedirs("data", exist_ok=True)
-        file_path = "data/posts.json"
-        with open(file_path, "w", encoding="utf-8") as f:
-            json.dump(posts, f, ensure_ascii=False, indent=4)
+    # Simpan ke Firebase
+    ref = db.reference(FIREBASE_PATH)
+    ref.set(data)
 
-        print(
-            f"BERHASIL! Menyimpan {len(posts)} data postingan ke {file_path}"
-        )
+    print(f"    Path Firebase: /{FIREBASE_PATH}")
+    print(f"    Jumlah post: {len(posts)}")
 
-    except Exception as e:
-        print(f"Terjadi error saat proses interaksi: {e}")
-    finally:
-        driver.quit()
 
+# ============================================================
+# ENTRY POINT
+# ============================================================
 
 if __name__ == "__main__":
-    scrape_picuki_click_search()
+    main()
