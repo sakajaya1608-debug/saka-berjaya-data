@@ -14,10 +14,11 @@ from apify_client import ApifyClient
 APIFY_TOKEN = os.environ.get("APIFY_TOKEN")
 FIREBASE_SERVICE_ACCOUNT = os.environ.get("FIREBASE_SERVICE_ACCOUNT")
 
-ACTOR_ID = "apify/instagram-scraper"
-INSTAGRAM_URL = "https://www.instagram.com/pemkab_okuselatan/"
+# Actor Pratyush07
+ACTOR_ID = "pratyush07/instagram-scraper"
+INSTAGRAM_USERNAME = "pemkab_okuselatan"
 
-# 👇 DIUBAH MENJADI 5 POST SAJA
+# Batasi 5 post (menggunakan parameter maxPosts)
 RESULTS_LIMIT = 5 
 
 FIREBASE_DB_URL = "https://sakajaya-af9d5-default-rtdb.asia-southeast1.firebasedatabase.app"
@@ -30,7 +31,7 @@ FIREBASE_PATH = "berita_cache/posts"
 
 def main():
     print("=" * 60)
-    print("SAKA BERJAYA — Instagram Scraper (5 Post)")
+    print("SAKA BERJAYA — Instagram Scraper (Pratyush07)")
     print("=" * 60)
 
     if not APIFY_TOKEN:
@@ -40,16 +41,17 @@ def main():
 
     print("\n[1/3] Menjalankan Apify Actor...")
     posts = run_apify_actor()
-    print(f"    ✅ Berhasil mengambil {len(posts)} post dari Instagram")
+    
+    valid_posts = [p for p in posts if isinstance(p, dict)]
+    print(f"    ✅ Berhasil mengambil {len(valid_posts)} post dari Instagram")
 
-    if not posts:
+    if not valid_posts:
         print("    ⚠️ Tidak ada post yang diambil. Batalkan.")
         return
 
     print("\n[2/3] Memproses data...")
-    cleaned = [clean_post(p) for p in posts]
+    cleaned = [clean_post(p) for p in valid_posts]
     
-    # Filter post yang ID-nya kosong
     cleaned = [p for p in cleaned if p.get("id")]
     print(f"    ✅ {len(cleaned)} post valid siap disimpan")
 
@@ -69,14 +71,13 @@ def main():
 def run_apify_actor():
     client = ApifyClient(APIFY_TOKEN)
     
+    # 👇 FORMAT INPUT DISESUAIKAN UNTUK ACTOR PRATYUSH07
     run_input = {
-        "directUrls": [INSTAGRAM_URL],
-        "resultsType": "posts",
-        "resultsLimit": RESULTS_LIMIT, # Di-set ke 5
-        # 👇 MENGGUNAKAN RESIDENTIAL PROXY AGAR TIDAK DIBLOKIR
+        "usernames": [INSTAGRAM_USERNAME],
+        "maxPosts": RESULTS_LIMIT,  # Parameter berbeda dari actor sebelumnya
         "proxyConfiguration": {
             "useApifyProxy": True,
-            "apifyProxyGroups": ["RESIDENTIAL"]
+            "apifyProxyGroups": ["RESIDENTIAL"] # Wajib Residential
         },
     }
 
@@ -90,8 +91,11 @@ def run_apify_actor():
 
 
 def clean_post(post):
-    """Bersihkan & standarisasi field post."""
-    post_id = post.get("id") or post.get("shortCode") or post.get("shortcode") or ""
+    """Bersihkan & standarisasi field post dari Actor Pratyush07."""
+    # Actor ini membungkus data di dalam objek 'profile' dan 'posts'
+    # Kita perlu menyesuaikan pengambilan field-nya
+    profile_data = post.get("profile", {})
+    post_id = post.get("id") or post.get("shortCode") or ""
     
     return {
         "id": post_id,
@@ -101,7 +105,7 @@ def clean_post(post):
         "timestamp": post.get("timestamp") or int(time.time()),
         "likeCount": post.get("likesCount") or post.get("likes") or 0,
         "commentCount": post.get("commentsCount") or post.get("comments") or 0,
-        "ownerUsername": post.get("ownerUsername") or "pemkab_okuselatan",
+        "ownerUsername": post.get("ownerUsername") or profile_data.get("username") or "pemkab_okuselatan",
     }
 
 
@@ -110,14 +114,12 @@ def save_to_firebase(posts):
     cred = credentials.Certificate(json.loads(FIREBASE_SERVICE_ACCOUNT))
     firebase_admin.initialize_app(cred, {"databaseURL": FIREBASE_DB_URL})
 
-    # 1. Update metadata waktu sync
     meta_ref = db.reference("berita_cache")
     meta_ref.update({
         "updatedAt": int(time.time() * 1000),
         "updatedAtISO": datetime.now(timezone.utc).isoformat(),
     })
 
-    # 2. Siapkan data post berdasarkan ID
     updates = {}
     for p in posts:
         if p["id"]:
@@ -127,7 +129,6 @@ def save_to_firebase(posts):
         print("    ⚠️ Tidak ada data valid untuk disimpan ke posts.")
         return
 
-    # 3. Simpan ke Firebase
     posts_ref = db.reference(FIREBASE_PATH)
     posts_ref.update(updates)
     
