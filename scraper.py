@@ -14,16 +14,19 @@ from apify_client import ApifyClient
 APIFY_TOKEN = os.environ.get("APIFY_TOKEN")
 FIREBASE_SERVICE_ACCOUNT = os.environ.get("FIREBASE_SERVICE_ACCOUNT")
 
-# Menggunakan Actor Resmi Apify
+# Nama Actor Instagram Scraper
 ACTOR_ID = "apify/instagram-scraper"
 
-# 👇 COOKIE SESSIONID ANDA SUDAH DIMASUKKAN DI SINI
-INSTAGRAM_SESSION_ID = "16909757083%3ApjfdS3Itnvcmcy%3A7%3AAYnTfD1dx_Wn6b9lY5F3uUgmDI5cDpOx5LeAC87LHw"
-
+# URL target
 INSTAGRAM_URL = "https://www.instagram.com/pemkab_okuselatan/"
-RESULTS_LIMIT = 5 
 
+# Jumlah post yang diambil per scraping
+RESULTS_LIMIT = 12
+
+# URL Firebase Realtime Database
 FIREBASE_DB_URL = "https://sakajaya-af9d5-default-rtdb.asia-southeast1.firebasedatabase.app"
+
+# Path di Firebase
 FIREBASE_PATH = "berita_cache/posts"
 
 
@@ -33,7 +36,7 @@ FIREBASE_PATH = "berita_cache/posts"
 
 def main():
     print("=" * 60)
-    print("SAKA BERJAYA — Instagram Scraper (Dengan Cookie)")
+    print("SAKA BERJAYA — Instagram Scraper (Komulatif)")
     print("=" * 60)
 
     if not APIFY_TOKEN:
@@ -41,26 +44,20 @@ def main():
     if not FIREBASE_SERVICE_ACCOUNT:
         raise ValueError("FIREBASE_SERVICE_ACCOUNT tidak di-set!")
 
+    # 1. Ambil data dari Apify
     print("\n[1/3] Menjalankan Apify Actor...")
     posts = run_apify_actor()
-    
-    valid_posts = [p for p in posts if isinstance(p, dict)]
-    print(f"    ✅ Berhasil mengambil {len(valid_posts)} post dari Instagram")
+    print(f"    ✅ Berhasil mengambil {len(posts)} post dari Instagram")
 
-    if not valid_posts:
+    if not posts:
         print("    ⚠️ Tidak ada post yang diambil. Batalkan.")
         return
 
+    # 2. Proses data
     print("\n[2/3] Memproses data...")
-    cleaned = [clean_post(p) for p in valid_posts]
+    cleaned = [clean_post(p) for p in posts]
     
-    cleaned = [p for p in cleaned if p.get("id")]
-    print(f"    ✅ {len(cleaned)} post valid siap disimpan")
-
-    if not cleaned:
-        print("    ⚠️ Semua post tidak memiliki ID valid. Batalkan.")
-        return
-
+    # 3. Simpan ke Firebase secara komulatif (Update per ID)
     print("\n[3/3] Menyimpan ke Firebase (Mode Komulatif)...")
     save_to_firebase(cleaned)
     print("    ✅ Data berhasil disimpan/diperbarui")
@@ -72,25 +69,11 @@ def main():
 
 def run_apify_actor():
     client = ApifyClient(APIFY_TOKEN)
-    
-    # Format input dengan Cookie
     run_input = {
         "directUrls": [INSTAGRAM_URL],
         "resultsType": "posts",
         "resultsLimit": RESULTS_LIMIT,
-        "proxyConfiguration": {
-            "useApifyProxy": True,
-            "apifyProxyGroups": ["RESIDENTIAL"]
-        },
-        # Menyisipkan cookie sessionid
-        "cookies": [
-            {
-                "name": "sessionid",
-                "value": INSTAGRAM_SESSION_ID,
-                "domain": ".instagram.com",
-                "path": "/"
-            }
-        ]
+        "proxyConfiguration": {"useApifyProxy": True},
     }
 
     run = client.actor(ACTOR_ID).call(run_input=run_input)
@@ -103,13 +86,12 @@ def run_apify_actor():
 
 
 def clean_post(post):
-    post_id = post.get("id") or post.get("shortCode") or post.get("shortcode") or ""
-    
+    """Bersihkan & standarisasi field post."""
     return {
-        "id": post_id,
+        "id": post.get("id") or post.get("shortCode") or "",
         "caption": post.get("caption") or "",
         "imageUrl": post.get("displayUrl") or post.get("imageUrl") or "",
-        "postUrl": post.get("url") or f"https://www.instagram.com/p/{post_id}/",
+        "postUrl": post.get("url") or f"https://www.instagram.com/p/{post.get('shortCode', '')}/",
         "timestamp": post.get("timestamp") or int(time.time()),
         "likeCount": post.get("likesCount") or post.get("likes") or 0,
         "commentCount": post.get("commentsCount") or post.get("comments") or 0,
@@ -118,25 +100,27 @@ def clean_post(post):
 
 
 def save_to_firebase(posts):
+    """Simpan data ke Firebase secara komulatif (tidak menimpa ID lama)."""
     cred = credentials.Certificate(json.loads(FIREBASE_SERVICE_ACCOUNT))
     firebase_admin.initialize_app(cred, {"databaseURL": FIREBASE_DB_URL})
 
+    # 1. Update metadata waktu sync
     meta_ref = db.reference("berita_cache")
     meta_ref.update({
         "updatedAt": int(time.time() * 1000),
         "updatedAtISO": datetime.now(timezone.utc).isoformat(),
     })
 
+    # 2. Simpan/Update setiap post berdasarkan ID-nya
+    posts_ref = db.reference(FIREBASE_PATH)
     updates = {}
+    
     for p in posts:
         if p["id"]:
+            # Gunakan ID post sebagai key di Firebase
             updates[p["id"]] = p
 
-    if not updates:
-        print("    ⚠️ Tidak ada data valid untuk disimpan ke posts.")
-        return
-
-    posts_ref = db.reference(FIREBASE_PATH)
+    # Simpan sekaligus (update akan menambahkan jika ID baru, atau menimpa jika ID sama)
     posts_ref.update(updates)
     
     print(f"    Path Firebase: /{FIREBASE_PATH}")
