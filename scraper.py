@@ -1,3 +1,10 @@
+"""
+Script untuk scraping Instagram @pemkab_okuselatan via Apify
+dan menyimpan hasilnya ke Firebase Realtime Database.
+
+Berjalan otomatis via GitHub Actions setiap hari jam 06:00 WIB.
+"""
+
 import os
 import json
 import time
@@ -14,15 +21,20 @@ from apify_client import ApifyClient
 APIFY_TOKEN = os.environ.get("APIFY_TOKEN")
 FIREBASE_SERVICE_ACCOUNT = os.environ.get("FIREBASE_SERVICE_ACCOUNT")
 
-# Actor Pratyush07
-ACTOR_ID = "pratyush07/instagram-scraper"
-INSTAGRAM_USERNAME = "pemkab_okuselatan"
+# Nama Actor Instagram Scraper (bisa diganti)
+ACTOR_ID = "apify/instagram-scraper"
 
-# Batasi 5 post (menggunakan parameter maxPosts)
-RESULTS_LIMIT = 5 
+# URL target
+INSTAGRAM_URL = "https://www.instagram.com/pemkab_okuselatan/"
 
+# Jumlah post yang diambil
+RESULTS_LIMIT = 12
+
+# URL Firebase Realtime Database
 FIREBASE_DB_URL = "https://sakajaya-af9d5-default-rtdb.asia-southeast1.firebasedatabase.app"
-FIREBASE_PATH = "berita_cache/posts"
+
+# Path di Firebase
+FIREBASE_PATH = "berita_cache"
 
 
 # ============================================================
@@ -31,37 +43,39 @@ FIREBASE_PATH = "berita_cache/posts"
 
 def main():
     print("=" * 60)
-    print("SAKA BERJAYA — Instagram Scraper (Pratyush07)")
+    print("SAKA BERJAYA — Instagram Scraper")
     print("=" * 60)
 
+    # Validasi environment
     if not APIFY_TOKEN:
-        raise ValueError("APIFY_TOKEN tidak di-set!")
+        raise ValueError("APIFY_TOKEN tidak di-set di environment!")
     if not FIREBASE_SERVICE_ACCOUNT:
-        raise ValueError("FIREBASE_SERVICE_ACCOUNT tidak di-set!")
+        raise ValueError("FIREBASE_SERVICE_ACCOUNT tidak di-set di environment!")
 
+    # ----------------------------------------
+    # 1. Jalankan Apify Actor
+    # ----------------------------------------
     print("\n[1/3] Menjalankan Apify Actor...")
     posts = run_apify_actor()
-    
-    valid_posts = [p for p in posts if isinstance(p, dict)]
-    print(f"    ✅ Berhasil mengambil {len(valid_posts)} post dari Instagram")
+    print(f"    ✅ Berhasil mengambil {len(posts)} post dari Instagram")
 
-    if not valid_posts:
-        print("    ⚠️ Tidak ada post yang diambil. Batalkan.")
+    if not posts:
+        print("    ⚠️  Tidak ada post yang diambil. Batalkan.")
         return
 
+    # ----------------------------------------
+    # 2. Parse & bersihkan data
+    # ----------------------------------------
     print("\n[2/3] Memproses data...")
-    cleaned = [clean_post(p) for p in valid_posts]
-    
-    cleaned = [p for p in cleaned if p.get("id")]
-    print(f"    ✅ {len(cleaned)} post valid siap disimpan")
+    cleaned = [clean_post(p) for p in posts]
+    print(f"    ✅ {len(cleaned)} post siap disimpan")
 
-    if not cleaned:
-        print("    ⚠️ Semua post tidak memiliki ID valid. Batalkan.")
-        return
-
-    print("\n[3/3] Menyimpan ke Firebase (Mode Komulatif)...")
+    # ----------------------------------------
+    # 3. Simpan ke Firebase
+    # ----------------------------------------
+    print("\n[3/3] Menyimpan ke Firebase Realtime Database...")
     save_to_firebase(cleaned)
-    print("    ✅ Data berhasil disimpan/diperbarui")
+    print("    ✅ Data berhasil disimpan")
 
     print("\n" + "=" * 60)
     print("SELESAI")
@@ -69,72 +83,82 @@ def main():
 
 
 def run_apify_actor():
+    """Menjalankan Apify Actor dan mengembalikan daftar post."""
     client = ApifyClient(APIFY_TOKEN)
-    
-    # 👇 FORMAT INPUT DISESUAIKAN UNTUK ACTOR PRATYUSH07
+
+    # Input sesuai skema Actor Instagram Scraper
     run_input = {
-        "usernames": [INSTAGRAM_USERNAME],
-        "maxPosts": RESULTS_LIMIT,  # Parameter berbeda dari actor sebelumnya
+        "directUrls": [INSTAGRAM_URL],
+        "resultsType": "posts",
+        "resultsLimit": RESULTS_LIMIT,
         "proxyConfiguration": {
             "useApifyProxy": True,
-            "apifyProxyGroups": ["RESIDENTIAL"] # Wajib Residential
         },
     }
 
+    print(f"    Actor: {ACTOR_ID}")
+    print(f"    Target: {INSTAGRAM_URL}")
+    print(f"    Limit: {RESULTS_LIMIT} post")
+
+    # Jalankan Actor
     run = client.actor(ACTOR_ID).call(run_input=run_input)
 
-    if not run or run.get("status") != "SUCCEEDED":
-        raise RuntimeError(f"Apify Actor gagal: {run.get('status')}")
+    if not run:
+        raise RuntimeError("Apify Actor gagal dijalankan")
 
+    print(f"    Run ID: {run.get('id')}")
+    print(f"    Status: {run.get('status')}")
+
+    if run.get("status") != "SUCCEEDED":
+        raise RuntimeError(f"Apify Actor tidak sukses: {run.get('status')}")
+
+    # Ambil hasil dari dataset
     dataset_id = run.get("defaultDatasetId")
-    return list(client.dataset(dataset_id).iterate_items())
+    items = list(client.dataset(dataset_id).iterate_items())
+
+    return items
 
 
 def clean_post(post):
-    """Bersihkan & standarisasi field post dari Actor Pratyush07."""
-    # Actor ini membungkus data di dalam objek 'profile' dan 'posts'
-    # Kita perlu menyesuaikan pengambilan field-nya
-    profile_data = post.get("profile", {})
-    post_id = post.get("id") or post.get("shortCode") or ""
-    
+    """Bersihkan & standarisasi field post."""
+    # Coba berbagai kemungkinan nama field
     return {
-        "id": post_id,
+        "id": post.get("id") or post.get("shortCode") or "",
         "caption": post.get("caption") or "",
         "imageUrl": post.get("displayUrl") or post.get("imageUrl") or "",
-        "postUrl": post.get("url") or f"https://www.instagram.com/p/{post_id}/",
+        "postUrl": post.get("url") or f"https://www.instagram.com/p/{post.get('shortCode', '')}/",
         "timestamp": post.get("timestamp") or int(time.time()),
         "likeCount": post.get("likesCount") or post.get("likes") or 0,
         "commentCount": post.get("commentsCount") or post.get("comments") or 0,
-        "ownerUsername": post.get("ownerUsername") or profile_data.get("username") or "pemkab_okuselatan",
+        "ownerUsername": post.get("ownerUsername") or "pemkab_okuselatan",
     }
 
 
 def save_to_firebase(posts):
-    """Simpan data ke Firebase secara komulatif."""
+    """Simpan data ke Firebase Realtime Database."""
+    # Init Firebase
     cred = credentials.Certificate(json.loads(FIREBASE_SERVICE_ACCOUNT))
     firebase_admin.initialize_app(cred, {"databaseURL": FIREBASE_DB_URL})
 
-    meta_ref = db.reference("berita_cache")
-    meta_ref.update({
+    # Data yang akan disimpan
+    data = {
         "updatedAt": int(time.time() * 1000),
         "updatedAtISO": datetime.now(timezone.utc).isoformat(),
-    })
+        "count": len(posts),
+        "posts": {p["id"]: p for p in posts if p["id"]},
+    }
 
-    updates = {}
-    for p in posts:
-        if p["id"]:
-            updates[p["id"]] = p
+    # Simpan ke Firebase
+    ref = db.reference(FIREBASE_PATH)
+    ref.set(data)
 
-    if not updates:
-        print("    ⚠️ Tidak ada data valid untuk disimpan ke posts.")
-        return
-
-    posts_ref = db.reference(FIREBASE_PATH)
-    posts_ref.update(updates)
-    
     print(f"    Path Firebase: /{FIREBASE_PATH}")
-    print(f"    Jumlah post diproses: {len(updates)}")
+    print(f"    Jumlah post: {len(posts)}")
 
+
+# ============================================================
+# ENTRY POINT
+# ============================================================
 
 if __name__ == "__main__":
     main()
