@@ -16,7 +16,10 @@ FIREBASE_SERVICE_ACCOUNT = os.environ.get("FIREBASE_SERVICE_ACCOUNT")
 
 ACTOR_ID = "apify/instagram-scraper"
 INSTAGRAM_URL = "https://www.instagram.com/pemkab_okuselatan/"
-RESULTS_LIMIT = 12
+
+# 👇 DIUBAH MENJADI 5 POST SAJA
+RESULTS_LIMIT = 5 
+
 FIREBASE_DB_URL = "https://sakajaya-af9d5-default-rtdb.asia-southeast1.firebasedatabase.app"
 FIREBASE_PATH = "berita_cache/posts"
 
@@ -27,7 +30,7 @@ FIREBASE_PATH = "berita_cache/posts"
 
 def main():
     print("=" * 60)
-    print("SAKA BERJAYA — Instagram Scraper (Komulatif)")
+    print("SAKA BERJAYA — Instagram Scraper (5 Post)")
     print("=" * 60)
 
     if not APIFY_TOKEN:
@@ -65,11 +68,16 @@ def main():
 
 def run_apify_actor():
     client = ApifyClient(APIFY_TOKEN)
+    
     run_input = {
         "directUrls": [INSTAGRAM_URL],
         "resultsType": "posts",
-        "resultsLimit": RESULTS_LIMIT,
-        "proxyConfiguration": {"useApifyProxy": True},
+        "resultsLimit": RESULTS_LIMIT, # Di-set ke 5
+        # 👇 MENGGUNAKAN RESIDENTIAL PROXY AGAR TIDAK DIBLOKIR
+        "proxyConfiguration": {
+            "useApifyProxy": True,
+            "apifyProxyGroups": ["RESIDENTIAL"]
+        },
     }
 
     run = client.actor(ACTOR_ID).call(run_input=run_input)
@@ -83,7 +91,6 @@ def run_apify_actor():
 
 def clean_post(post):
     """Bersihkan & standarisasi field post."""
-    # Ambil ID dari berbagai kemungkinan field
     post_id = post.get("id") or post.get("shortCode") or post.get("shortcode") or ""
     
     return {
